@@ -1,0 +1,10 @@
+Notizen:
+
+
+Heizung:
+	Variante 1 Heizdraht in Schlauch:
+	Gegeben: Spannung 12V, Soll Leistung 30W
+	--> Benötige Widerstand von 4,8 Ohm 
+	NiCr Draht 0,8mm -> Widerstand pro meter: 2,168 Ohm/m -> benötigte länge l = 2,21m
+	
+Temperatursensor Eisbad gemessen: -0,375°C
