@@ -17,7 +17,8 @@ SPDX-License-Identifier: GPL-3.0-or-later
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-use tokio_serial::SerialPortBuilderExt;
+use tokio_serial::{SerialPortBuilderExt, SerialStream};
+use tokio::io::{ReadHalf, WriteHalf};
 use std::time::Duration;
 use std::{
     env,
@@ -99,13 +100,23 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
     // open serial once, then split read/write
     // prevents trying to open the same serial device twice
-    let port = tokio_serial::new(serial_path, baud_rate).open_native_async()?;
-    let (read_half, write_half) = tokio::io::split(port);
+    let (read_half, write_half): (Option<ReadHalf<SerialStream>>, Option<WriteHalf<SerialStream>>) =
+    match tokio_serial::new(serial_path, baud_rate).open_native_async() {
+        Ok(port) => {
+            let (r, w) = tokio::io::split(port);
+            (Some(r), Some(w))
+        }
+        Err(_e) => {
+            // loggen, wenn du willst
+            (None, None)
+        }
+    };
 
     // Spawn Actors
     let sender_handle = serial::sender::SenderActor::spawn(write_half);
     let influx_handle = influx::InfluxActor::spawn(influx_cfg);
     let control_handle = control::ControlActor::spawn(sender_handle.clone());
+    let web_handle = web::WebActor::spawn(control_handle.clone());
     let reader = 
         serial::reader::ReaderActor::spawn(
             read_half, 
@@ -120,6 +131,10 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
         }
         res = reader => {
             // if reader ends unexpectedly, bubble up the error
+            res??;
+        }
+        res = web_handle => {
+            // if web server ends unexpectedly, bubble up the error
             res??;
         }
     }

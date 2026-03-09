@@ -52,13 +52,11 @@ impl SenderHandle {
 
 pub struct SenderActor {
     rx: mpsc::UnboundedReceiver<SenderMsg>,
-    write_half: WriteHalf<SerialStream>,
+    write_half: Option<WriteHalf<SerialStream>>,
 }
 
 impl SenderActor {
-    /// Spawn the sender actor. The serial port must already be opened in main.rs and split;
-    /// pass the write half here.
-    pub fn spawn(write_half: WriteHalf<SerialStream>) -> SenderHandle {
+    pub fn spawn(write_half: Option<WriteHalf<SerialStream>>) -> SenderHandle {
         let (tx, rx) = mpsc::unbounded_channel();
 
         let actor = Self { rx, write_half };
@@ -71,17 +69,23 @@ impl SenderActor {
         while let Some(msg) = self.rx.recv().await {
             let line = msg.to_line();
 
-            if let Err(err) = self.write_half.write_all(line.as_bytes()).await {
-                warn!("Failed to write to serial port: {err}");
-                continue;
-            }
+            match self.write_half {
+                Some(ref mut writer) => {
+                    if let Err(err) = writer.write_all(line.as_bytes()).await {
+                        warn!("Failed to write to serial port: {err}");
+                        continue;
+                    }
 
-            if let Err(err) = self.write_half.flush().await {
-                warn!("Failed to flush serial port: {err}");
-                continue;
-            }
+                    if let Err(err) = writer.flush().await {
+                        warn!("Failed to flush serial port: {err}");
+                        continue;
+                    }
+                }
+                None => {}
+            };
+            
 
-            debug!("Send Command: {line}");
+            debug!("Send Command: {}", line.trim_end_matches(&['\r', '\n'][..]));
         }
     }
 }

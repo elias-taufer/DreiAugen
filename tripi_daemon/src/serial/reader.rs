@@ -74,7 +74,7 @@ pub enum ParseReadingError {
 }
 
 pub struct ReaderActor {
-    read_half: ReadHalf<SerialStream>,
+    read_half: Option<ReadHalf<SerialStream>>,
     read_timeout: Duration,
 
     _control: ControlHandle,
@@ -83,7 +83,7 @@ pub struct ReaderActor {
 
 impl ReaderActor {
     pub fn spawn(
-        read_half: ReadHalf<SerialStream>,
+        read_half: Option<ReadHalf<SerialStream>>,
         control: ControlHandle,
         influx: InfluxHandle,
         read_timeout: Duration,
@@ -98,46 +98,59 @@ impl ReaderActor {
         tokio::spawn(actor.run())
     }
 
-    async fn run(self) -> std::io::Result<()> {
-        let mut reader = BufReader::new(self.read_half);
+    async fn run(mut self) -> std::io::Result<()> {
 
-        loop {
-            let mut line = String::new();
+        match self.read_half {
+            Some(ref mut read_half) => {
+                let mut reader = BufReader::new(read_half);
+                loop {
+                    let mut line = String::new();
 
-            let read_res = time::timeout(self.read_timeout, reader.read_line(&mut line)).await;
+                    let read_res = time::timeout(self.read_timeout, reader.read_line(&mut line)).await;
 
-            let n = match read_res {
-                Err(_) => {
-                    continue;
+                    let n = match read_res {
+                        Err(_) => {
+                            continue;
+                        }
+                        Ok(Ok(n)) => n,
+                        Ok(Err(err)) => {
+                            warn!("Unable to read line from serial port: {err}");
+                            continue;
+                        }
+                    };
+
+                    if n == 0 {
+                        continue; // no data 
+                    }
+
+                    let line = line.trim_end_matches(&['\r', '\n'][..]).to_string();
+                    if line.is_empty() {
+                        continue;
+                    }
+
+                    debug!("Read from serial port: {line}");
+
+                    // 2) Parse the subset that represents sensor readings and forward to influx
+                    let reading = match Reading::from_key_value_line(&line) {
+                        Ok(r) => r,
+                        Err(err) => {
+                            warn!("Could not parse reading from serial port: {err}");
+                            continue;
+                        }
+                    };
+
+                    let _ = self.influx.send_reading(reading);
                 }
-                Ok(Ok(n)) => n,
-                Ok(Err(err)) => {
-                    warn!("Unable to read line from serial port: {err}");
-                    continue;
+            },
+            None => {
+                let mut tick = time::interval(std::time::Duration::from_secs(1));
+                loop {
+                    tokio::select! {
+                        _ = tick.tick() => {}
+                    }
                 }
-            };
-
-            if n == 0 {
-                continue; // no data 
-            }
-
-            let line = line.trim_end_matches(&['\r', '\n'][..]).to_string();
-            if line.is_empty() {
-                continue;
-            }
-
-            debug!("Read from serial port: {line}");
-
-            // 2) Parse the subset that represents sensor readings and forward to influx
-            let reading = match Reading::from_key_value_line(&line) {
-                Ok(r) => r,
-                Err(err) => {
-                    warn!("Could not parse reading from serial port: {err}");
-                    continue;
-                }
-            };
-
-            let _ = self.influx.send_reading(reading);
+            },
         }
+        
     }
 }
