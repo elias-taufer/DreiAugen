@@ -17,9 +17,7 @@ SPDX-License-Identifier: GPL-3.0-or-later
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-use tokio_serial::{SerialPortBuilderExt, SerialStream};
-use tokio::io::{ReadHalf, WriteHalf};
-use std::time::Duration;
+use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use std::{
     env,
     fs,
@@ -27,12 +25,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use crate::serial::{SerialManagerHandle, SerialManagerMsg, SerialManagerActor};
+use crate::serial::reader::{ReaderHandle, ReaderMsg, ReaderActor};
+use crate::serial::sender::{SenderHandle, SenderMsg, SenderActor};
+
 mod control;
 mod influx;
-mod serial {
-    pub mod sender;
-    pub mod reader;
-}
+mod serial;
 mod web;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -95,43 +94,41 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
         .trim()
         .parse()
         .expect("Unable to read SERIAL_TIMEOUT");
+    let serial_timeout = std::time::Duration::from_millis(serial_timeout);
 
     let influx_cfg = influx::InfluxConfig::from_env();
 
-    // open serial once, then split read/write
-    // prevents trying to open the same serial device twice
-    let (read_half, write_half): (Option<ReadHalf<SerialStream>>, Option<WriteHalf<SerialStream>>) =
-    match tokio_serial::new(serial_path, baud_rate).open_native_async() {
-        Ok(port) => {
-            let (r, w) = tokio::io::split(port);
-            (Some(r), Some(w))
-        }
-        Err(_e) => {
-            // loggen, wenn du willst
-            (None, None)
-        }
-    };
+    // create Handles for later distribution to different Actors
+    let (tx_sender, rx_sender)
+    : (UnboundedSender<SenderMsg>, UnboundedReceiver<SenderMsg>) = mpsc::unbounded_channel();
+    let sender_handle = SenderHandle::new(tx_sender);
+
+    let (tx_reader, rx_reader)
+        : (UnboundedSender<ReaderMsg>, UnboundedReceiver<ReaderMsg>) = mpsc::unbounded_channel();
+    let reader_handle = ReaderHandle::new(tx_reader);
+
+    let (tx_serial, rx_serial)
+        : (UnboundedSender<SerialManagerMsg>, UnboundedReceiver<SerialManagerMsg>) = mpsc::unbounded_channel();
+    let serial_handle = SerialManagerHandle::new(tx_serial);
 
     // Spawn Actors
-    let sender_handle = serial::sender::SenderActor::spawn(write_half);
     let influx_handle = influx::InfluxActor::spawn(influx_cfg);
     let control_handle = control::ControlActor::spawn(sender_handle.clone());
     let web_handle = web::WebActor::spawn(control_handle.clone());
-    let reader = 
-        serial::reader::ReaderActor::spawn(
-            read_half, 
-            control_handle, 
-            influx_handle, 
-            Duration::from_millis(serial_timeout),
-        );
+    SerialManagerActor::spawn(rx_serial, sender_handle.clone(), reader_handle.clone(), serial_path, baud_rate);
+    SenderActor::spawn(rx_sender, serial_handle.clone());
+    ReaderActor::spawn(
+        rx_reader, 
+        serial_handle.clone(), 
+        control_handle.clone(), 
+        influx_handle.clone(), 
+        serial_timeout
+    );
 
+    // Error handling if something failed
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
             // dropping handles closes channels and lets tasks exit naturally
-        }
-        res = reader => {
-            // if reader ends unexpectedly, bubble up the error
-            res??;
         }
         res = web_handle => {
             // if web server ends unexpectedly, bubble up the error

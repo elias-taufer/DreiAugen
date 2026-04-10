@@ -33,7 +33,7 @@ enum TimeOfDay { Sunrise, Day, Sunset, Night }
 /// Messages the ControlActor can receive
 #[derive(Debug)]
 pub enum ControlMsg {
-    SensorReading(Reading),
+    _SensorReading(Reading),
     GetSettings(oneshot::Sender<ControlSettings>),
     UpdateSettings(ControlSettingsPatch),
 }
@@ -68,7 +68,7 @@ pub struct ControlHandle {
 }
 
 impl ControlHandle {
-    pub fn send(&self, msg: ControlMsg) -> Result<(), mpsc::error::SendError<ControlMsg>> {
+    pub fn _send(&self, msg: ControlMsg) -> Result<(), mpsc::error::SendError<ControlMsg>> {
         self.tx.send(msg)
     }
 
@@ -177,7 +177,7 @@ impl ControlActor {
 
     async fn handle_msg(&mut self, msg: ControlMsg) {
         match msg {
-            ControlMsg::SensorReading(sensor_reading) => self.on_sensor_reading(sensor_reading).await,
+            ControlMsg::_SensorReading(sensor_reading) => self.on_sensor_reading(sensor_reading).await,
             ControlMsg::GetSettings(reply_to) => {
                 let _ = reply_to.send(self.current_settings());
             }

@@ -87,7 +87,7 @@ impl InfluxConfig {
         let device_id = std::env::var("DEVICE_ID").unwrap_or_else(|_| "tripi".to_owned());
 
         Self {
-            host: host,
+            host,
             org,
             token,
             bucket,
@@ -205,61 +205,3 @@ impl InfluxActor {
         self.client.write(&self.bucket, stream::iter([point])).await
     }
 }
-
-/*
-use influxdb2::Client;
-use influxdb2_derive::WriteDataPoint;
-
-use crate::Reading;
-use chrono::Utc;
-use futures::prelude::stream;
-
-#[derive(Default, WriteDataPoint)]
-#[measurement = "water_temperature"]
-struct WaterTemperature {
-    #[influxdb(tag)]
-    sensor_id: String,
-    #[influxdb(tag)]
-    sensor_type: String,
-    #[influxdb(tag)]
-    device_id: String,
-    #[influxdb(field)]
-    temperature_c: f64,
-    #[influxdb(timestamp)]
-    time: i64,
-}
-
-struct InfluxWriter {
-    client: Client,
-    bucket: String,
-    device_id: String,
-}
-
-impl InfluxWriter {
-    fn new() -> Self {
-        let host = std::env::var("INFLUXDB_URL").unwrap();
-        let org = std::env::var("INFLUXDB_ORG").unwrap();
-        let token = std::env::var("INFLUXDB_TOKEN").unwrap();
-        let bucket = std::env::var("INFLUXDB_BUCKET").unwrap();
-        let client = Client::new(host, org, token);
-        let device_id = std::env::var("DEVICE_ID").unwrap_or_else(|_| "tripi".to_owned());
-
-        Self {client, bucket, device_id}
-    }
-
-    async fn write_water_temperature(&self, reading: Reading) -> Result<(), influxdb2::RequestError> {
-
-        let point = WaterTemperature {
-            sensor_id: reading.sensor_id,
-            sensor_type: reading.sensor_type,
-            device_id: self.device_id.clone(),
-            temperature_c: reading.value,
-            time: Utc::now().timestamp_nanos_opt().expect("no nanos timestamp available"),
-        };
-        
-        self.client
-            .write(&self.bucket, stream::iter([point]))
-            .await
-    }
-}
-    */

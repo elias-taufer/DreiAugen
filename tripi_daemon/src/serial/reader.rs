@@ -17,16 +17,17 @@ SPDX-License-Identifier: GPL-3.0-or-later
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-use std::time::Duration;
 use log::{debug, warn};
+use std::time::Duration;
 use thiserror::Error;
 use tokio::io::{AsyncBufReadExt, BufReader, ReadHalf};
-use tokio::task::JoinHandle;
+use tokio::sync::mpsc;
 use tokio::time;
 use tokio_serial::SerialStream;
 
-use crate::control::{ControlHandle};
+use crate::control::ControlHandle;
 use crate::influx::InfluxHandle;
+use crate::serial::{SerialManagerHandle, SerialManagerMsg};
 
 #[derive(Debug)]
 pub struct Reading {
@@ -36,7 +37,7 @@ pub struct Reading {
 }
 
 impl Reading {
-    pub fn from_key_value_line(line: &str) -> Result<Self, ParseReadingError> {
+    pub fn from_key_value_line(line: &str) -> Result<Self, ValueMissingError> {
         let mut sensor_id: Option<String> = None;
         let mut sensor_type: Option<String> = None;
         let mut value: Option<f64> = None;
@@ -56,101 +57,173 @@ impl Reading {
         }
 
         Ok(Self {
-            sensor_id: sensor_id.ok_or(ParseReadingError::MissingSensorId)?,
-            sensor_type: sensor_type.ok_or(ParseReadingError::MissingSensorType)?,
-            value: value.ok_or(ParseReadingError::MissingOrBadValue)?,
+            sensor_id: sensor_id.ok_or(ValueMissingError::SensorId)?,
+            sensor_type: sensor_type.ok_or(ValueMissingError::SensorType)?,
+            value: value.ok_or(ValueMissingError::MissingOrBadValue)?,
         })
     }
 }
 
 #[derive(Error, Debug)]
-pub enum ParseReadingError {
+pub enum ValueMissingError {
     #[error("missing sensor_id")]
-    MissingSensorId,
+    SensorId,
     #[error("missing sensor_type")]
-    MissingSensorType,
+    SensorType,
     #[error("missing or invalid value")]
     MissingOrBadValue,
 }
 
+pub enum ReaderMsg {
+    SetReader(ReadHalf<SerialStream>),
+    Disconnect,
+}
+
+#[derive(Clone)]
+pub struct ReaderHandle {
+    tx: mpsc::UnboundedSender<ReaderMsg>,
+}
+
+impl ReaderHandle {
+    pub fn new(tx: mpsc::UnboundedSender<ReaderMsg>) -> Self {
+        Self { tx }
+    }
+
+    pub fn send(&self, message: ReaderMsg) -> Result<(), tokio::sync::mpsc::error::SendError<ReaderMsg>> {
+        self.tx.send(message)
+    }
+}
+
+pub enum ReaderState {
+    Disconnected,
+    Connected(BufReader<ReadHalf<SerialStream>>),
+}
+
 pub struct ReaderActor {
-    read_half: Option<ReadHalf<SerialStream>>,
+    rx: mpsc::UnboundedReceiver<ReaderMsg>,
+    state: ReaderState,
     read_timeout: Duration,
 
+    serial_manager: SerialManagerHandle,
     _control: ControlHandle,
     influx: InfluxHandle,
 }
 
 impl ReaderActor {
     pub fn spawn(
-        read_half: Option<ReadHalf<SerialStream>>,
+        rx: mpsc::UnboundedReceiver<ReaderMsg>,
+        serial_manager: SerialManagerHandle,
         control: ControlHandle,
         influx: InfluxHandle,
         read_timeout: Duration,
-    ) -> JoinHandle<std::io::Result<()>> {
+    ) {
+        let state = ReaderState::Disconnected;
+
         let actor = Self {
-            read_half,
+            rx,
+            state,
             read_timeout,
+            serial_manager,
             _control: control,
             influx,
         };
 
-        tokio::spawn(actor.run())
+        tokio::spawn(actor.run());
     }
 
-    async fn run(mut self) -> std::io::Result<()> {
-
-        match self.read_half {
-            Some(ref mut read_half) => {
-                let mut reader = BufReader::new(read_half);
-                loop {
-                    let mut line = String::new();
-
-                    let read_res = time::timeout(self.read_timeout, reader.read_line(&mut line)).await;
-
-                    let n = match read_res {
-                        Err(_) => {
-                            continue;
-                        }
-                        Ok(Ok(n)) => n,
-                        Ok(Err(err)) => {
-                            warn!("Unable to read line from serial port: {err}");
-                            continue;
-                        }
-                    };
-
-                    if n == 0 {
-                        continue; // no data 
-                    }
-
-                    let line = line.trim_end_matches(&['\r', '\n'][..]).to_string();
-                    if line.is_empty() {
-                        continue;
-                    }
-
-                    debug!("Read from serial port: {line}");
-
-                    // 2) Parse the subset that represents sensor readings and forward to influx
-                    let reading = match Reading::from_key_value_line(&line) {
-                        Ok(r) => r,
-                        Err(err) => {
-                            warn!("Could not parse reading from serial port: {err}");
-                            continue;
-                        }
-                    };
-
-                    let _ = self.influx.send_reading(reading);
-                }
-            },
-            None => {
-                let mut tick = time::interval(std::time::Duration::from_secs(1));
-                loop {
-                    tokio::select! {
-                        _ = tick.tick() => {}
-                    }
-                }
-            },
+    async fn handle_msg(&mut self, msg: ReaderMsg) {
+        match msg {
+            ReaderMsg::SetReader(reader) => {
+                self.state = ReaderState::Connected(BufReader::new(reader));
+            }
+            ReaderMsg::Disconnect => {
+                self.state = ReaderState::Disconnected;
+            }
         }
+    }
+
+    // todo: async fn read() -> future 
+    async fn read(reader: &mut BufReader<ReadHalf<SerialStream>>, read_timeout: Duration) 
+        -> tokio::io::Result<Option<Reading>> 
+    {
+        let mut line = String::new();
+
+        let result = time::timeout(read_timeout, reader.read_line(&mut line)).await;
+         
+        match result {
+            Ok(Ok(0)) => Ok(None), // no data 
+            Ok(Ok(_)) => {
+                let line = line.trim_end_matches(&['\r', '\n'][..]).to_string();
+                if line.is_empty() {
+                    return Ok(None);
+                }
+
+                debug!("Read from serial port: {line}");
+
+                // 2) Parse the subset that represents sensor readings and forward to influx
+                match Reading::from_key_value_line(&line) {
+                    Ok(reading) => Ok(Some(reading)),
+                    Err(err) => {
+                        warn!("Could not parse reading from serial port: {err}");
+                        Ok(None)
+                    }
+                }
+            }
+            Ok(Err(e)) => Err(e),
+            Err(_) => 
+                // Timeout occurred, no line ready
+                // You can optionally do something here or just continue
+                // println!("Read timeout, no data yet");
+                Ok(None)
+            
+        }
+                        
+    }
+
+    async fn run(mut self) {
+        loop {
+
+            match &mut self.state {
+                ReaderState::Connected(reader) => {
+                    tokio::select! {
+                        msg = self.rx.recv() => {
+                            match msg {
+                                Some(msg) => self.handle_msg(msg).await,
+                                None => break, // channel closed
+                            }
+                        }
+
+                        result =  Self::read(reader, self.read_timeout) => {
+                            match result {
+                                Ok(Some(reading)) => {
+                                    let _ = self.influx.send_reading(reading);
+                                }
+                                Ok(None) => {
+                                    // timeout, empty line, or no data
+                                }
+                                Err(e) => {
+                                    eprintln!("Serial read error: {e}");
+                                    self.state = ReaderState::Disconnected;
+                                    let _ = self.serial_manager.send(SerialManagerMsg::SerialPortReadFail);
+                                }
+                            }
+                        }
+                        
+                    }
+                }
+
+                ReaderState::Disconnected => {
+                    // Only handle messages when disconnected
+                    if let Some(msg) = self.rx.recv().await {
+                        self.handle_msg(msg).await;
+                    } else {
+                        break;
+                    }
+                }
+            }
+
+        }
+
         
     }
 }

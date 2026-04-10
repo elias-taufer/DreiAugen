@@ -22,19 +22,27 @@ use tokio::io::{AsyncWriteExt, WriteHalf};
 use tokio::sync::mpsc;
 use tokio_serial::SerialStream;
 
+use crate::serial::{SerialManagerHandle, SerialManagerMsg};
+
 #[derive(Debug)]
 pub enum SenderMsg {
     /// sets the target for the heating control in °C 
     TargetTemperature(f32),
     /// 0.0 is off and 1.0 is maximum brightness
     LEDBrightness(f32),
+
+    SetWriter(WriteHalf<SerialStream>),
+
+    Disconnect,
 }
 
 impl SenderMsg {
     fn to_line(&self) -> String {
-        match *self {
+        match self {
             SenderMsg::TargetTemperature(value) => format!("target-temperature {value:.2}\n"),
             SenderMsg::LEDBrightness(value) => format!("led-brightness {value:.2}\n"),
+            SenderMsg::SetWriter(_writer) => "Replace Writer".to_string(),
+            SenderMsg::Disconnect => "disconnect".to_string(),
         }
     }
 }
@@ -45,47 +53,63 @@ pub struct SenderHandle {
 }
 
 impl SenderHandle {
+    pub fn new(tx: mpsc::UnboundedSender<SenderMsg>) -> Self {
+        Self { tx }
+    }
+
     pub fn send_command(&self, message: SenderMsg) -> Result<(), tokio::sync::mpsc::error::SendError<SenderMsg>> {
         self.tx.send(message)
     }
 }
 
+pub enum SenderState {
+    Disconnected,
+    Connected(WriteHalf<SerialStream>),
+}
+
 pub struct SenderActor {
+    state: SenderState,
     rx: mpsc::UnboundedReceiver<SenderMsg>,
-    write_half: Option<WriteHalf<SerialStream>>,
+
+    serial_manager: SerialManagerHandle,
 }
 
 impl SenderActor {
-    pub fn spawn(write_half: Option<WriteHalf<SerialStream>>) -> SenderHandle {
-        let (tx, rx) = mpsc::unbounded_channel();
+    pub fn spawn(rx_sender: mpsc::UnboundedReceiver<SenderMsg>, serial_manager: SerialManagerHandle) {
 
-        let actor = Self { rx, write_half };
+        let state = SenderState::Disconnected;
+
+        let actor = Self { state, rx: rx_sender, serial_manager };
         tokio::spawn(actor.run());
-
-        SenderHandle { tx }
     }
 
     async fn run(mut self) {
         while let Some(msg) = self.rx.recv().await {
-            let line = msg.to_line();
 
-            match self.write_half {
-                Some(ref mut writer) => {
-                    if let Err(err) = writer.write_all(line.as_bytes()).await {
-                        warn!("Failed to write to serial port: {err}");
-                        continue;
-                    }
+            match msg {
+                SenderMsg::Disconnect => self.state = SenderState::Disconnected,
+                SenderMsg::SetWriter(writer) => self.state = SenderState::Connected(writer),
+                _ => Self::send_msg_to_serial(msg.to_line(), &mut self.state, &self.serial_manager).await,
+            }
 
-                    if let Err(err) = writer.flush().await {
-                        warn!("Failed to flush serial port: {err}");
-                        continue;
-                    }
-                }
-                None => {}
-            };
-            
+        }
+    }
 
-            debug!("Send Command: {}", line.trim_end_matches(&['\r', '\n'][..]));
+    async fn send_msg_to_serial(message: String, state: &mut SenderState, serial_manager: &SerialManagerHandle) {
+        if let SenderState::Connected(writer) = state {
+            if let Err(err) = writer.write_all(message.as_bytes()).await {
+                let _ = serial_manager.send(SerialManagerMsg::SerialPortWriteFail);
+                warn!("Failed to write to serial port: {err}");
+                return;
+            }
+
+            if let Err(err) = writer.flush().await {
+                let _ = serial_manager.send(SerialManagerMsg::SerialPortWriteFail);
+                warn!("Failed to flush serial port: {err}");
+                return;
+            }
+
+            debug!("Send Command: {}", message.trim_end_matches(&['\r', '\n'][..]));
         }
     }
 }

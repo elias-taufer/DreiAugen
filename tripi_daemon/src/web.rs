@@ -146,16 +146,15 @@ fn parse_patch(dto: ControlSettingsPatchDto) -> Result<ControlSettingsPatch, (St
         Some(s) => Some(parse_time(&s).map_err(|e| (StatusCode::BAD_REQUEST, e))?),
     };
 
-    if let Some(v) = dto.day_light_level {
-        if !(0.0..=1.0).contains(&v) {
-            return Err((StatusCode::BAD_REQUEST, "day_light_level must be between 0.0 and 1.0".to_string()));
-        }
+    if let Some(v) = dto.day_light_level 
+        && !(0.0..=1.0).contains(&v) {
+        return Err((StatusCode::BAD_REQUEST, "day_light_level must be between 0.0 and 1.0".to_string()));
+        
     }
 
-    if let Some(v) = dto.night_light_level {
-        if !(0.0..=1.0).contains(&v) {
-            return Err((StatusCode::BAD_REQUEST, "night_light_level must be between 0.0 and 1.0".to_string()));
-        }
+    if let Some(v) = dto.night_light_level 
+        && !(0.0..=1.0).contains(&v) {
+        return Err((StatusCode::BAD_REQUEST, "night_light_level must be between 0.0 and 1.0".to_string()));
     }
 
     Ok(ControlSettingsPatch {
