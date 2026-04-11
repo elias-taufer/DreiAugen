@@ -111,9 +111,9 @@ impl ControlActor {
     pub fn spawn(sender: sender::SenderHandle) -> ControlHandle {
         let (tx, rx) = mpsc::unbounded_channel();
 
-        let sunrise_start = NaiveTime::from_hms_opt(7, 0, 0).unwrap();
+        let sunrise_start = NaiveTime::from_hms_opt(8, 0, 0).unwrap();
         let day_start = sunrise_start + Duration::minutes(60);
-        let sunset_start = NaiveTime::from_hms_opt(22, 55, 0).unwrap();
+        let sunset_start = NaiveTime::from_hms_opt(19, 00, 0).unwrap();
         let night_start = sunset_start + Duration::minutes(60);
 
         let now = Local::now().time(); 
@@ -125,13 +125,13 @@ impl ControlActor {
             _ => TimeOfDay::Night,
         };     
 
-        let day_temp = 23.0_f64;
-        let night_temp = 22.0_f64;
+        let day_temp = 24.0_f64;
+        let night_temp = 23.0_f64;
         let target_temp = day_temp;
 
         let light_level = 0.0_f64;
-        let day_light_level = 1.0_f64;
-        let night_light_level = 0.4_f64;
+        let day_light_level = 0.7_f64;
+        let night_light_level = 0.0_f64;
 
         let actor = Self {
             rx,

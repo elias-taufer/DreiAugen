@@ -87,7 +87,12 @@ impl SenderActor {
         while let Some(msg) = self.rx.recv().await {
 
             match msg {
-                SenderMsg::Disconnect => self.state = SenderState::Disconnected,
+                SenderMsg::Disconnect => { 
+                    if let SenderState::Connected(write_half) = &mut self.state {
+                        let _ = write_half.shutdown().await;
+                    }
+                    self.state = SenderState::Disconnected 
+                },
                 SenderMsg::SetWriter(writer) => self.state = SenderState::Connected(writer),
                 _ => Self::send_msg_to_serial(msg.to_line(), &mut self.state, &self.serial_manager).await,
             }

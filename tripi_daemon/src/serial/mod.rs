@@ -138,10 +138,12 @@ impl SerialManagerActor {
             SerialManagerMsg::SerialPortReadFail => {
                 self.state = SerialState::Disconnected;
                 let _ = self.sender.send_command(SenderMsg::Disconnect);
+                let _ = self.reader.send(ReaderMsg::Disconnect);
             },
             SerialManagerMsg::SerialPortWriteFail => {
                 self.state = SerialState::Disconnected;
                 let _ = self.reader.send(ReaderMsg::Disconnect);
+                let _ = self.sender.send_command(SenderMsg::Disconnect);
             }
         }
     }

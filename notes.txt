@@ -8,3 +8,23 @@ Heizung:
 	NiCr Draht 0,8mm -> Widerstand pro meter: 2,168 Ohm/m -> benötigte länge l = 2,21m
 	
 Temperatursensor Eisbad gemessen: -0,375°C
+
+
+
+PINS PI 3 -> Arduino
+	Feeder trigger pin GPIO17 -> Digital 2
+	Aquarium Pump GPIO27 -> Digital 3
+	Reserve Tank GPIO22 -> Digital 4
+
+Arduino PINs
+	D2 In feeder trigger
+	D3 In Aquarium Pump
+	D4 In Reserve Pump
+	
+	D6 Out Pump Green Aquarium Controle
+	D7 Out Pump Yellow Reserve Tank Controle
+	
+	D8  Stepper In1
+	D9  Stepper In2
+	D10 Stepper In3
+	D11 Stepper In4

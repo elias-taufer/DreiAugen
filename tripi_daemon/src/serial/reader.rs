@@ -203,7 +203,7 @@ impl ReaderActor {
                                 }
                                 Err(e) => {
                                     eprintln!("Serial read error: {e}");
-                                    self.state = ReaderState::Disconnected;
+                                    
                                     let _ = self.serial_manager.send(SerialManagerMsg::SerialPortReadFail);
                                 }
                             }

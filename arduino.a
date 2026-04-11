@@ -1,0 +1,82 @@
+/* 
+  Example sketch to control a 28BYJ-48 stepper motor 
+  with ULN2003 driver board and Arduino UNO. 
+  More info: https://www.makerguides.com 
+*/
+
+// Include the Arduino Stepper.h library:
+#include "Stepper.h"
+
+#include <avr/sleep.h>    // Bibliothek OPTIONAL!
+#include <avr/power.h>    // Bibliothek OPTIONAL!
+
+// Define number of steps per rotation:
+const int stepsPerRevolution = 2048;
+
+
+const int feederTriggerPin = 2;
+const int pumpAquaFromPi = 3;
+const int pumpTankFromPi = 4;
+
+const int pumpAquaOutputPin = 6;
+const int pumpTankOutputPin = 7;
+
+const int feederTriggerTimeLo = 1000;
+const int feederTriggerTimeHi = 1100;
+bool feederTriggerLastState = LOW;
+unsigned long feederHighStartTime = 0;
+
+// Stepper pins
+const int motorPin1 = 8;
+const int motorPin2 = 10;
+const int motorPin3 = 9;
+const int motorPin4 = 11;
+
+Stepper Motor = Stepper(stepsPerRevolution, motorPin1, motorPin2, motorPin3, motorPin4);
+
+void disableStepper() {
+  digitalWrite(motorPin1, LOW);
+  digitalWrite(motorPin2, LOW);
+  digitalWrite(motorPin3, LOW);
+  digitalWrite(motorPin4, LOW);
+}
+
+void feed() {
+  Motor.step(2048/16);
+  //disableStepper();
+}
+
+void setup() 
+{
+  pinMode(feederTriggerPin, INPUT);
+  pinMode(pumpAquaFromPi, INPUT);
+  pinMode(pumpTankFromPi, INPUT);
+  pinMode(pumpAquaOutputPin, OUTPUT);
+  pinMode(pumpTankOutputPin, OUTPUT);
+  Motor.setSpeed(5); 
+}
+
+void loop(){
+  bool feedTriggerCurrentState = digitalRead(feederTriggerPin);
+
+  // Rising edge: LOW -> HIGH
+  if (feedTriggerCurrentState == HIGH && feederTriggerLastState == LOW) {
+    feederHighStartTime = millis();
+  }
+
+  // Falling edge: HIGH -> LOW
+  if (feedTriggerCurrentState == LOW && feederTriggerLastState == HIGH) {
+    unsigned long highDuration = millis() - feederHighStartTime;
+
+    if (highDuration > feederTriggerTimeLo && highDuration < feederTriggerTimeHi) {
+      feed();
+    }
+  }
+
+  feederTriggerLastState = feedTriggerCurrentState;
+
+  digitalWrite(pumpAquaOutputPin, digitalRead(pumpAquaFromPi));
+  digitalWrite(pumpTankOutputPin, digitalRead(pumpTankFromPi));
+}
+
+
