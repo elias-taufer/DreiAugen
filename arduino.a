@@ -43,7 +43,7 @@ void disableStepper() {
 
 void feed() {
   Motor.step(2048/16);
-  //disableStepper();
+  disableStepper();
 }
 
 void setup() 
@@ -53,6 +53,8 @@ void setup()
   pinMode(pumpTankFromPi, INPUT);
   pinMode(pumpAquaOutputPin, OUTPUT);
   pinMode(pumpTankOutputPin, OUTPUT);
+  digitalWrite(pumpAquaOutputPin, LOW);
+  digitalWrite(pumpTankOutputPin, LOW);
   Motor.setSpeed(5); 
 }
 
