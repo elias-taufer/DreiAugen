@@ -29,3 +29,5 @@ Usefull commands:
 	Set Pi GPIO
 	Set High: sudo pinctrl set 17 op dh
 	Set Low: sudo pinctrl set 17 ip
+	
+	ffmpeg -i feeding_2026-04-11_15-00-00.h264 -vf "hflip,vflip" -c:v libx264 -crf 23 -preset slow feeding-26-04-11_15-00.mp4
