@@ -141,8 +141,7 @@ impl ReaderActor {
             }
         }
     }
-
-    // todo: async fn read() -> future 
+ 
     async fn read(reader: &mut BufReader<ReadHalf<SerialStream>>, read_timeout: Duration) 
         -> tokio::io::Result<Option<Reading>> 
     {
@@ -171,9 +170,7 @@ impl ReaderActor {
             }
             Ok(Err(e)) => Err(e),
             Err(_) => 
-                // Timeout occurred, no line ready
-                // You can optionally do something here or just continue
-                // println!("Read timeout, no data yet");
+                // Timeout occurred, no line ready. Expected behaviour.
                 Ok(None)
             
         }

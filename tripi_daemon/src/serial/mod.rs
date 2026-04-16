@@ -55,6 +55,13 @@ impl SerialManagerHandle {
     }
 }
 
+/**
+ * Handles the serial port. When a failure while reading or writing on the serial port is detected
+   the SerialManagerActor will try to open the port again and provide the read and write halfes to 
+   their corresponding actors ReaderActor and SenderActor.
+ * This depends on if the SenderActor was able to execute WriteHalf::shutdown previousle. 
+   If not, a restart of the application is probably necessary to recover.
+ */
 pub struct SerialManagerActor {
     state: SerialState,
     sender: SenderHandle,
@@ -87,6 +94,10 @@ impl SerialManagerActor {
         tokio::spawn(actor.run());
     }
 
+    /// Runs the Actor.
+    /// 
+    /// Checks if the Serial port is open on every tick (2 sec intervall).
+    /// If the Serial Port is not open it will try to open it.
     async fn run(mut self) {
 
         let mut tick = time::interval(std::time::Duration::from_secs(2));
@@ -110,9 +121,10 @@ impl SerialManagerActor {
         if matches!(self.state, SerialState::Disconnected) {
             self.connect().await;
         }
-        
     }
 
+    /// Tries to open the serial port and sends the SenderActor and ReaderActor their
+    /// corresponding write-/read halfes.
     async fn connect(&mut self) {
         self.state = SerialState::Reconnecting;
 

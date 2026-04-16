@@ -17,7 +17,7 @@ SPDX-License-Identifier: GPL-3.0-or-later
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-use chrono::Utc;
+use chrono::Local;
 use futures::prelude::stream;
 use influxdb2::Client;
 use influxdb2_derive::WriteDataPoint;
@@ -170,7 +170,7 @@ impl InfluxActor {
             sensor_type: reading.sensor_type,
             device_id: self.device_id.clone(),
             value: reading.value,
-            time: Utc::now()
+            time: Local::now()
                 .timestamp_nanos_opt()
                 .expect("no nanos timestamp available"),
         };
@@ -184,7 +184,7 @@ impl InfluxActor {
             sensor_type: reading.sensor_type,
             device_id: self.device_id.clone(),
             temperature_c: reading.value,
-            time: Utc::now()
+            time: Local::now()
                 .timestamp_nanos_opt()
                 .expect("no nanos timestamp available"),
         };
@@ -197,7 +197,7 @@ impl InfluxActor {
             sensor_type: reading.sensor_type,
             device_id: self.device_id.clone(),
             value: reading.value,
-            time: Utc::now()
+            time: Local::now()
                 .timestamp_nanos_opt()
                 .expect("no nanos timestamp available"),
         };

@@ -67,6 +67,11 @@ pub enum SenderState {
     Connected(WriteHalf<SerialStream>),
 }
 
+/// Will send the received data over the serial port.
+/// 
+/// Will try to shut down the serial connection it currently holds 
+/// when Disconnect Message is received to free the connection 
+/// for a reconnect.
 pub struct SenderActor {
     state: SenderState,
     rx: mpsc::UnboundedReceiver<SenderMsg>,
@@ -83,6 +88,7 @@ impl SenderActor {
         tokio::spawn(actor.run());
     }
 
+    /// Runs the actor and closes the write_half if message for Disconnect is received.
     async fn run(mut self) {
         while let Some(msg) = self.rx.recv().await {
 

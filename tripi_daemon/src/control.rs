@@ -18,12 +18,13 @@ SPDX-License-Identifier: GPL-3.0-or-later
 */
 
 use chrono::{ NaiveTime, Local, Duration };
-use tokio::sync::mpsc;
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 use tokio::time::{self};
 use log::{debug, warn};
 use num_traits::cast::ToPrimitive;
+use serde::{Deserialize, Serialize};
 
+use crate::config_persistance::PersistanceHandle;
 use crate::serial::sender::{self, SenderMsg};
 use crate::serial::reader::Reading;
 
@@ -50,7 +51,7 @@ pub struct ControlSettings {
     pub nigh_light_level: f64,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Deserialize, Serialize)]
 pub struct ControlSettingsPatch {
     pub sunrise_start: Option<NaiveTime>,
     pub day_start: Option<NaiveTime>,
@@ -90,6 +91,7 @@ pub struct ControlActor {
     rx: mpsc::UnboundedReceiver<ControlMsg>,
 
     sender: sender::SenderHandle,
+    persistance: PersistanceHandle,
 
     light_level: f64,
     target_temp: f64,
@@ -108,7 +110,7 @@ pub struct ControlActor {
 }
 
 impl ControlActor {
-    pub fn spawn(sender: sender::SenderHandle) -> ControlHandle {
+    pub fn spawn(sender: sender::SenderHandle, persistance: PersistanceHandle) -> ControlHandle {
         let (tx, rx) = mpsc::unbounded_channel();
 
         let sunrise_start = NaiveTime::from_hms_opt(8, 0, 0).unwrap();
@@ -136,6 +138,7 @@ impl ControlActor {
         let actor = Self {
             rx,
             sender,
+            persistance,
             light_level,
             target_temp,
             time_of_day,
@@ -155,7 +158,11 @@ impl ControlActor {
     }
 
     async fn run(mut self) {
-        
+
+        if let Some(settings) = self.persistance.read_settings().await {
+            self.apply_settings_patch(settings)
+        }  
+
         let mut tick = time::interval(std::time::Duration::from_secs(2));
 
         loop {
@@ -182,7 +189,8 @@ impl ControlActor {
                 let _ = reply_to.send(self.current_settings());
             }
             ControlMsg::UpdateSettings(patch) => {
-                self.apply_settings_patch(patch);
+                self.apply_settings_patch(patch.clone());
+                let _ = self.persistance.write_settings(patch).await;
             }
         }
     }

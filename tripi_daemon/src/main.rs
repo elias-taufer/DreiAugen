@@ -25,14 +25,18 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::serial::{SerialManagerHandle, SerialManagerMsg, SerialManagerActor};
+use crate::{config_persistance::{PersistanceActor, PersistanceHandle, PersistanceMsg}, serial::{SerialManagerActor, SerialManagerHandle, SerialManagerMsg}};
 use crate::serial::reader::{ReaderHandle, ReaderMsg, ReaderActor};
 use crate::serial::sender::{SenderHandle, SenderMsg, SenderActor};
+use env_logger::Builder;
+use log::LevelFilter;
+use std::io::Write;
 
 mod control;
 mod influx;
 mod serial;
 mod web;
+mod config_persistance;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Load cfg before Tokio runtime exists
@@ -54,7 +58,13 @@ fn config_path_next_to_exe(filename: &str) -> io::Result<PathBuf> {
 }
 
 fn load_env_from_cfg_file(path: &Path) -> io::Result<()> {
-    let text = fs::read_to_string(path)?;
+    let text = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            return Ok(());
+        }
+        Err(err) => return Err(err),
+    };
     for raw in text.lines() {
         let line = raw.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -78,10 +88,19 @@ fn load_env_from_cfg_file(path: &Path) -> io::Result<()> {
 }
 
 async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
-    env_logger::init();
+
+    // initialise logging
+    let mut builder = Builder::new();
+
+    builder
+        .filter_level(LevelFilter::Info)
+        .format(|buf, record| {
+            let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
+            writeln!(buf, "{} [{}] {}", ts, record.level(), record.args())
+        })
+        .init();
 
     // load settings
-
     let serial_path = std::env::var("SERIAL_PORT")
         .expect("Unable to find SERIAL_PORT");
     let baud_rate: u32 = std::env::var("SERIAL_BAUD")
@@ -99,8 +118,11 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
     let influx_cfg = influx::InfluxConfig::from_env();
 
     // create Handles for later distribution to different Actors
+    let (tx_persistance, rx_persistance)
+        : (UnboundedSender<PersistanceMsg>, UnboundedReceiver<PersistanceMsg>) = mpsc::unbounded_channel();
+    let persistance_handle = PersistanceHandle::new(tx_persistance);
     let (tx_sender, rx_sender)
-    : (UnboundedSender<SenderMsg>, UnboundedReceiver<SenderMsg>) = mpsc::unbounded_channel();
+        : (UnboundedSender<SenderMsg>, UnboundedReceiver<SenderMsg>) = mpsc::unbounded_channel();
     let sender_handle = SenderHandle::new(tx_sender);
 
     let (tx_reader, rx_reader)
@@ -113,7 +135,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Spawn Actors
     let influx_handle = influx::InfluxActor::spawn(influx_cfg);
-    let control_handle = control::ControlActor::spawn(sender_handle.clone());
+    let control_handle = control::ControlActor::spawn(sender_handle.clone(), persistance_handle.clone());
     let web_handle = web::WebActor::spawn(control_handle.clone());
     SerialManagerActor::spawn(rx_serial, sender_handle.clone(), reader_handle.clone(), serial_path, baud_rate);
     SenderActor::spawn(rx_sender, serial_handle.clone());
@@ -124,14 +146,14 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
         influx_handle.clone(), 
         serial_timeout
     );
+    PersistanceActor::spawn(rx_persistance, "config/aquarium.cfg".to_string());
 
-    // Error handling if something failed
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
-            // dropping handles closes channels and lets tasks exit naturally
+            // todo: dropping handles closes channels and lets tasks exit naturally
         }
         res = web_handle => {
-            // if web server ends unexpectedly, bubble up the error
+            // todo: if web server ends unexpectedly, bubble up the error
             res??;
         }
     }
