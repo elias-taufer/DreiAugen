@@ -1,0 +1,91 @@
+version: "3.8"
+
+services:
+  influxdb:
+    image: influxdb:2
+    container_name: influxdb
+    restart: unless-stopped
+    ports:
+      - "8086:8086"
+    volumes:
+      - influxdb2-data:/var/lib/influxdb2
+      - influxdb2-config:/etc/influxdb2
+    environment:
+      # Automated first-time setup (creates user, org, bucket, token)
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=piadmin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=ZeA2EjNJwAp37icP5Nrb
+      - DOCKER_INFLUXDB_INIT_ORG=home
+      - DOCKER_INFLUXDB_INIT_BUCKET=sensors
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=ZeA2EjNJwAp37icP5Nrb
+      - INFLUXD_SESSION_LENGTH=14400           # 1 day
+      - INFLUXD_SESSION_RENEW_DISABLED=false
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - influxdb
+    environment: 
+      - GF_PANELS_DISABLE_SANITIZE_HTML=true
+      - GF_SECURITY_ADMIN_USER=piadmin
+      - GF_SECURITY_ADMIN_PASSWORD=your_secure_password
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+      - GF_AUTH_BASIC_ENABLED=false
+      
+  tripi-daemon:
+    image: debian:bookworm-slim
+    container_name: tripi-daemon
+    restart: no
+    depends_on:
+      - influxdb
+    working_dir: /app
+    command:
+      - /bin/sh
+      - -c
+      - |
+        echo "container started"
+        ls -l /app
+        file /app/tripi_daemon
+        ldd /app/tripi_daemon || true
+        echo "starting app..."
+        exec /app/tripi_daemon
+    environment:
+      - RUST_LOG=debug
+      - INFLUXDB_URL=http://influxdb:8086
+      - INFLUXDB_ORG=home
+      - INFLUXDB_BUCKET=sensors
+      - INFLUXDB_TOKEN=ZeA2EjNJwAp37icP5Nrb
+      - INFLUXDB_MEASUREMENT=serial_sensors
+      - INFLUXDB_TAG_KEY=sensor
+      - INFLUXDB_FIELD_KEY=value
+      - LOG_LEVEL=INFO
+      - INFLUXDB_TIMEOUT_MS=5000
+      - SERIAL_PORT=/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0
+      - SERIAL_BAUD=115200
+      - SERIAL_TIMEOUT=5000
+      - TZ=Europe/Berlin
+    ports:
+      - "3333:3333"   
+    stop_grace_period: 30s
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+      - /opt/tripi_daemon/tripi_daemon:/app/tripi_daemon:ro 
+      - /opt/tripi_daemon/config:/app/config
+      - /opt/tripi_daemon/logs:/app/logs
+    devices:
+      - "/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0:/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0:rwm"
+
+volumes:
+  influxdb2-data:
+  influxdb2-config:
+  grafana-data:
+
